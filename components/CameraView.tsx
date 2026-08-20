@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type Peer from "peerjs";
-import { FilesetResolver, ImageSegmenter } from "@mediapipe/tasks-vision";
+import { createPersonSegmenter, type PersonSegmenter } from "@/lib/bgSegment";
 import { answerCalls, callPeer, createPeer, peerIdFor, PeerRole } from "@/lib/peer";
 
 export type CameraViewHandle = {
@@ -21,7 +21,6 @@ type Props = {
 };
 
 const MAX_EDGE = 1080;
-const PREVIEW_EDGE = 480;
 
 export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraView(
   { mode, roomId, role, liveBackground, backgroundSrc, onReadyChange, flashKey },
@@ -31,8 +30,7 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const foregroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const segmenterRef = useRef<PersonSegmenter | null>(null);
   const peerRef = useRef<Peer | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const backgroundImageRef = useRef<HTMLImageElement | null>(null);
@@ -118,8 +116,8 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
     };
   }, [mode, roomId, role, facing]);
 
-  // MediaPipe runs its person-segmentation model directly on video frames. The mask is composited on
-  // the GPU-backed pipeline before each repaint, rather than waiting for a still photo to be captured.
+  // The person mask refreshes every 60ms, while the latest video pixels are painted every animation
+  // frame. This keeps motion fluid without trying to run neural inference at display refresh rate.
   useEffect(() => {
     if (!liveBackground || mode !== "solo" || !localReady) {
       livePreviewReadyRef.current = false;
@@ -128,89 +126,39 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
       return;
     }
     let cancelled = false;
-    let animationFrame: number | undefined;
-    let segmenter: ImageSegmenter | undefined;
-    setPreviewStatus("Loading live camera effects — first use can take 10–30 seconds…");
+    let animationFrame = 0;
+    const video = localVideoRef.current;
+    const preview = previewCanvasRef.current;
+    if (!video || !preview) return;
+    const segmenter = createPersonSegmenter(video, setPreviewStatus);
+    segmenterRef.current = segmenter;
     const renderNext = () => {
-      const video = localVideoRef.current;
-      const preview = previewCanvasRef.current;
-      if (!segmenter || !video?.videoWidth || !preview || cancelled) return;
-      segmenter.segmentForVideo(video, performance.now(), (result) => {
-        const personMask = result.confidenceMasks?.[1];
-        if (!personMask || cancelled) return;
-        const width = Math.min(PREVIEW_EDGE, video.videoWidth);
-        const height = Math.round(width * (video.videoHeight / video.videoWidth));
-        preview.width = width;
-        preview.height = height;
-        const ctx = preview.getContext("2d");
-        if (!ctx) return;
-        const background = backgroundImageRef.current;
-        if (background) drawCover(ctx, background, 0, 0, width, height);
-        else {
-          const gradient = ctx.createLinearGradient(0, 0, width, height);
-          gradient.addColorStop(0, "#3a204e");
-          gradient.addColorStop(1, "#ff4b5c");
-          ctx.fillStyle = gradient;
-          ctx.fillRect(0, 0, width, height);
+      if (cancelled || !video.videoWidth) return;
+      const cutout = segmenter.cutout();
+      const background = backgroundImageRef.current;
+      if (cutout && background) {
+        preview.width = video.videoWidth;
+        preview.height = video.videoHeight;
+        const context = preview.getContext("2d");
+        if (context) {
+          drawCover(context, background, 0, 0, preview.width, preview.height);
+          drawMirrored(context, cutout, preview.width, preview.height, facing === "user");
+          livePreviewReadyRef.current = true;
+          setPreviewReady(true);
+          setPreviewStatus("");
         }
-        const foreground = foregroundCanvasRef.current ?? document.createElement("canvas");
-        foregroundCanvasRef.current = foreground;
-        foreground.width = width;
-        foreground.height = height;
-        const foregroundCtx = foreground.getContext("2d");
-        if (!foregroundCtx) return;
-        drawMirrored(foregroundCtx, video, width, height, facing === "user");
-        const mask = maskCanvasRef.current ?? document.createElement("canvas");
-        maskCanvasRef.current = mask;
-        mask.width = personMask.width;
-        mask.height = personMask.height;
-        const maskCtx = mask.getContext("2d");
-        if (!maskCtx) return;
-        const alpha = personMask.getAsFloat32Array();
-        const pixels = maskCtx.createImageData(mask.width, mask.height);
-        for (let index = 0; index < alpha.length; index += 1) pixels.data[index * 4 + 3] = Math.round(alpha[index] * 255);
-        maskCtx.putImageData(pixels, 0, 0);
-        foregroundCtx.globalCompositeOperation = "destination-in";
-        foregroundCtx.drawImage(mask, 0, 0, width, height);
-        foregroundCtx.globalCompositeOperation = "source-over";
-        ctx.drawImage(foreground, 0, 0);
-        livePreviewReadyRef.current = true;
-        setPreviewReady(true);
-        setPreviewStatus("");
-      });
-      if (!cancelled) animationFrame = requestAnimationFrame(renderNext);
-    };
-    async function createSegmenter(delegate: "GPU" | "CPU") {
-      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm");
-      return ImageSegmenter.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite",
-          delegate,
-        },
-        runningMode: "VIDEO",
-        outputConfidenceMasks: true,
-      });
-    }
-
-    async function start() {
-      try {
-        segmenter = await createSegmenter("GPU");
-        if (!cancelled) renderNext();
-      } catch {
-        try {
-          if (!cancelled) setPreviewStatus("GPU effects unavailable — starting compatible live mode…");
-          segmenter = await createSegmenter("CPU");
-          if (!cancelled) renderNext();
-        } catch {
-          if (!cancelled) setPreviewStatus("Live camera effects could not load — your original camera is still ready.");
-        }
+      } else if (segmenter.failed()) {
+        livePreviewReadyRef.current = false;
+        setPreviewReady(false);
       }
-    }
-    start();
+      animationFrame = requestAnimationFrame(renderNext);
+    };
+    animationFrame = requestAnimationFrame(renderNext);
     return () => {
       cancelled = true;
-      if (animationFrame) cancelAnimationFrame(animationFrame);
-      segmenter?.close();
+      cancelAnimationFrame(animationFrame);
+      segmenter.close();
+      if (segmenterRef.current === segmenter) segmenterRef.current = null;
     };
   }, [liveBackground, mode, localReady, facing, backgroundSrc]);
 
@@ -220,7 +168,6 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
 
   useImperativeHandle(ref, () => ({
     capture: () => {
-      if (mode === "solo" && liveBackground && livePreviewReadyRef.current && previewCanvasRef.current) return previewCanvasRef.current.toDataURL("image/png");
       const canvas = captureCanvasRef.current;
       const ctx = canvas?.getContext("2d");
       if (!canvas || !ctx) return null;
@@ -230,7 +177,14 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
         const { w, h } = fitDims(video.videoWidth, video.videoHeight);
         canvas.width = w;
         canvas.height = h;
-        drawMirrored(ctx, video, w, h, facing === "user");
+        const cutout = liveBackground ? segmenterRef.current?.cutout() : null;
+        const background = backgroundImageRef.current;
+        if (cutout && background) {
+          drawCover(ctx, background, 0, 0, w, h);
+          drawMirrored(ctx, cutout, w, h, facing === "user");
+        } else {
+          drawMirrored(ctx, video, w, h, facing === "user");
+        }
       } else {
         const first = role === "host" ? localVideoRef.current : remoteVideoRef.current;
         const second = role === "host" ? remoteVideoRef.current : localVideoRef.current;
@@ -269,7 +223,7 @@ function fitDims(width: number, height: number) {
   return scale >= 1 ? { w: width, h: height } : { w: Math.round(width * scale), h: Math.round(height * scale) };
 }
 
-function drawMirrored(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, width: number, height: number, mirror: boolean, offsetX = 0) {
+function drawMirrored(ctx: CanvasRenderingContext2D, video: HTMLVideoElement | HTMLCanvasElement, width: number, height: number, mirror: boolean, offsetX = 0) {
   ctx.save();
   ctx.translate(offsetX, 0);
   if (mirror) { ctx.translate(width, 0); ctx.scale(-1, 1); }
@@ -277,7 +231,7 @@ function drawMirrored(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, wi
   ctx.restore();
 }
 
-function drawCover(ctx: CanvasRenderingContext2D, image: HTMLImageElement | HTMLVideoElement, dx: number, dy: number, dw: number, dh: number) {
+function drawCover(ctx: CanvasRenderingContext2D, image: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement, dx: number, dy: number, dw: number, dh: number) {
   const width = image instanceof HTMLVideoElement ? image.videoWidth : image.width;
   const height = image instanceof HTMLVideoElement ? image.videoHeight : image.height;
   const sourceRatio = width / height;
