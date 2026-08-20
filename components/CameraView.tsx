@@ -130,7 +130,7 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
     let cancelled = false;
     let animationFrame: number | undefined;
     let segmenter: ImageSegmenter | undefined;
-    setPreviewStatus("Loading live camera effects…");
+    setPreviewStatus("Loading live camera effects — first use can take 10–30 seconds…");
     const renderNext = () => {
       const video = localVideoRef.current;
       const preview = previewCanvasRef.current;
@@ -180,20 +180,30 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
       });
       if (!cancelled) animationFrame = requestAnimationFrame(renderNext);
     };
+    async function createSegmenter(delegate: "GPU" | "CPU") {
+      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm");
+      return ImageSegmenter.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite",
+          delegate,
+        },
+        runningMode: "VIDEO",
+        outputConfidenceMasks: true,
+      });
+    }
+
     async function start() {
       try {
-        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm");
-        segmenter = await ImageSegmenter.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite",
-            delegate: "GPU",
-          },
-          runningMode: "VIDEO",
-          outputConfidenceMasks: true,
-        });
+        segmenter = await createSegmenter("GPU");
         if (!cancelled) renderNext();
       } catch {
-        if (!cancelled) setPreviewStatus("Live camera effects could not load — your original camera is still ready.");
+        try {
+          if (!cancelled) setPreviewStatus("GPU effects unavailable — starting compatible live mode…");
+          segmenter = await createSegmenter("CPU");
+          if (!cancelled) renderNext();
+        } catch {
+          if (!cancelled) setPreviewStatus("Live camera effects could not load — your original camera is still ready.");
+        }
       }
     }
     start();
@@ -240,7 +250,7 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
       {mode === "solo" ? <>
         <video ref={localVideoRef} autoPlay muted playsInline onLoadedMetadata={() => setLocalReady(true)} className={`h-full w-full object-cover ${previewReady ? "opacity-0" : "opacity-100"}`} style={{ transform: facing === "user" ? "scaleX(-1)" : "none" }} />
         <canvas ref={previewCanvasRef} className={`absolute inset-0 h-full w-full object-cover ${previewReady ? "opacity-100" : "opacity-0"}`} />
-        {liveBackground && !previewReady && !cameraError && <div className="absolute inset-x-0 bottom-0 bg-black/55 px-4 py-3 text-center font-mono text-[11px] text-[var(--color-flash-dim)]">{previewStatus || "Preparing live cutout…"}</div>}
+        {liveBackground && !cameraError && <div className="absolute inset-x-0 bottom-0 bg-black/55 px-4 py-3 text-center font-mono text-[11px] text-[var(--color-flash-dim)]">{previewReady ? "LIVE BACKGROUND ACTIVE" : previewStatus || "Preparing live cutout…"}</div>}
       </> : <div className="flex h-full w-full">
         <video ref={role === "host" ? localVideoRef : remoteVideoRef} autoPlay muted={role === "host"} playsInline onLoadedMetadata={() => role === "host" && setLocalReady(true)} className="h-full w-1/2 object-cover" style={{ transform: "scaleX(-1)" }} />
         <video ref={role === "host" ? remoteVideoRef : localVideoRef} autoPlay muted={role === "guest"} playsInline onLoadedMetadata={() => role === "guest" && setLocalReady(true)} className="h-full w-1/2 border-l border-[var(--color-line)] object-cover" style={{ transform: "scaleX(-1)" }} />
