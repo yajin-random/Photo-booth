@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-space-grotesk);
+  --font-mono: var(--font-plex-mono);
+
+  --color-ink: #1b1620;
+  --color-ink-soft: #241c2c;
+  --color-flash: #fffcf7;
+  --color-flash-dim: #f2ece0;
+  --color-shutter: #ff4b5c;
+  --color-shutter-dim: #d63d4c;
+  --color-gold: #f4b942;
+  --color-lavender: #c9b8db;
+  --color-line: rgba(255, 252, 247, 0.14);
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  background: var(--color-ink);
+  overscroll-behavior: none;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-flash);
+  font-family: var(--font-sans), sans-serif;
+  min-height: 100dvh;
+  touch-action: manipulation;
+}
+
+.font-display {
+  font-family: var(--font-display), serif;
+}
+
+.font-mono {
+  font-family: var(--font-mono), monospace;
+}
+
+/* Subtle grain overlay to keep the flat ink background from feeling like a template default */
+.grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  z-index: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes flash-pop {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.flash-pop {
+  animation: flash-pop 420ms ease-out forwards;
+}
+
+@keyframes strip-drop {
+  0% { transform: translateY(-14px) rotate(-1.5deg); opacity: 0; }
+  100% { transform: translateY(0) rotate(0deg); opacity: 1; }
+}
+.strip-drop {
+  animation: strip-drop 480ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@keyframes countdown-pulse {
+  0% { transform: scale(0.6); opacity: 0; }
+  30% { transform: scale(1.08); opacity: 1; }
+  70% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.94); opacity: 0; }
+}
+.countdown-pulse {
+  animation: countdown-pulse 1000ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash-pop, .strip-drop, .countdown-pulse {
+    animation-duration: 1ms !important;
+  }
+}
+
+::selection {
+  background: var(--color-shutter);
+  color: var(--color-flash);
+}
