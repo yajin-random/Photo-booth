@@ -1,7 +1,8 @@
 # Two-Up Booth
 
-A mobile-first, in-browser photo booth for two. Pose together (with a live guide overlay), shoot a
-3-2-1 countdown, optionally strip the background out, decorate with stickers, and get an instant
+A mobile-first, in-browser photo booth for two. Pose together (with a top-mounted guide), preview
+an on-device background cutout against a random stock background, shoot a 3-2-1 countdown, decorate
+with stickers, and get an instant
 downloadable photo strip — all client-side, no backend, no account.
 
 ## Run locally
@@ -39,13 +40,15 @@ LAN won't satisfy `getUserMedia` on a second device.
 ## What's stubbed vs. real
 
 - **Pose guides** are intentionally awaiting your meme images. Add a local public asset (for example,
-  `/pose-guides/back-to-back.webp`) to the matching entry in `lib/booth-content.ts`; the overlay will
-  use it automatically. No stand-in art is shown until then.
+  `/pose-guides/back-to-back.webp`) to the matching entry in `lib/booth-content.ts`; it will appear
+  above the camera. No stand-in art is shown until then.
 - **Stickers** are emoji glyphs (`lib/booth-content.ts`) rendered directly on the canvas via
   `react-konva`, so there's nothing to source or license — add more by adding entries to
   `STICKERS`.
-- **Background removal** uses `@imgly/background-removal` (in-browser WASM/ONNX, no API key). The
-  first run on a device downloads a ~40-80MB model that the browser then caches.
+- **Live background replacement** uses `@imgly/background-removal` (in-browser WASM/ONNX, no API key).
+  It processes low-resolution frames sequentially before capture, so speed depends on the device; the
+  first run downloads a ~40-80MB model that the browser then caches. The solo booth includes a random
+  stock-background picker; shared mode retains its direct peer-to-peer camera composition.
 
 ## Project structure
 

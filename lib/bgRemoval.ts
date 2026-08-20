@@ -18,3 +18,9 @@ export async function removeImageBackground(
 
   return URL.createObjectURL(blob);
 }
+
+/** Returns the transparent foreground blob for the low-resolution live preview. */
+export async function removeImageBackgroundBlob(source: Blob | string): Promise<Blob> {
+  const { removeBackground } = await import("@imgly/background-removal");
+  return removeBackground(source);
+}

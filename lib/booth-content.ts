@@ -9,6 +9,14 @@ export const POSE_GUIDES: PoseGuide[] = [
   { id: "silly-face", name: "Silly face", description: "Whatever your goofiest face is — go." },
 ];
 
+/** Curated Unsplash stock photographs used as client-side virtual backgrounds. */
+export const STOCK_BACKGROUNDS = [
+  { id: "sunset", name: "Sunset coast", src: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1080&q=82" },
+  { id: "flowers", name: "Flower field", src: "https://images.unsplash.com/photo-1497250681960-ef046c08a56e?auto=format&fit=crop&w=1080&q=82" },
+  { id: "city", name: "Neon city", src: "https://images.unsplash.com/photo-1519608487953-e999c86e7451?auto=format&fit=crop&w=1080&q=82" },
+  { id: "cabin", name: "Mountain cabin", src: "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?auto=format&fit=crop&w=1080&q=82" },
+] as const;
+
 export const STICKERS: StickerDef[] = [
   { id: "heart", glyph: "\u2764\uFE0F", label: "Heart" },
   { id: "sparkle", glyph: "\u2728", label: "Sparkle" },

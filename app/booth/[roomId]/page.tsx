@@ -6,15 +6,15 @@ import { CameraView, CameraViewHandle } from "@/components/CameraView";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { StickerEditor } from "@/components/StickerEditor";
 import { PhotoStripPreview } from "@/components/PhotoStripPreview";
-import { POSE_GUIDES } from "@/lib/booth-content";
-import { removeImageBackground } from "@/lib/bgRemoval";
+import { PoseGuideCard } from "@/components/PoseGuideOverlay";
+import { POSE_GUIDES, STOCK_BACKGROUNDS } from "@/lib/booth-content";
 import { CapturedFrame } from "@/lib/types";
 import { PeerRole } from "@/lib/peer";
 
 const TOTAL_SHOTS = 3;
 const FINAL_NOTE_PATH = "/sixmonths2026/index.html#final-note";
 
-type Stage = "setup" | "shooting" | "processing" | "sticker" | "strip";
+type Stage = "setup" | "shooting" | "sticker" | "strip";
 
 export default function BoothPage({ params }: { params: Promise<{ roomId: string }> }) {
   const { roomId } = use(params);
@@ -26,44 +26,28 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
 
   const [stage, setStage] = useState<Stage>("setup");
   const [poseId, setPoseId] = useState(POSE_GUIDES[0].id);
-  const [removeBg, setRemoveBg] = useState(true);
+  const [liveBackground, setLiveBackground] = useState(true);
+  const [backgroundIndex, setBackgroundIndex] = useState(0);
   const [cameraReady, setCameraReady] = useState(false);
   const [countingDown, setCountingDown] = useState(false);
   const [flashKey, setFlashKey] = useState(0);
   const [frames, setFrames] = useState<CapturedFrame[]>([]);
-  const [processingLabel, setProcessingLabel] = useState("");
-  const [bgFailed, setBgFailed] = useState(false);
 
   const cameraRef = useRef<CameraViewHandle>(null);
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/booth/${roomId}?mode=shared&role=guest` : "";
+  const selectedPose = POSE_GUIDES.find((pose) => pose.id === poseId) ?? POSE_GUIDES[0];
+  const selectedBackground = STOCK_BACKGROUNDS[backgroundIndex];
 
   async function handleCapture() {
     const dataUrl = cameraRef.current?.capture();
     if (!dataUrl) return;
     setFlashKey((k) => k + 1);
 
-    let finalUrl = dataUrl;
-    let didRemoveBackground = false;
-    if (removeBg) {
-      setStage("processing");
-      setProcessingLabel("Removing background…");
-      setBgFailed(false);
-      try {
-        finalUrl = await removeImageBackground(dataUrl, (p) => {
-          if (p.total) setProcessingLabel(`Removing background… ${Math.round((p.current / p.total) * 100)}%`);
-        });
-        didRemoveBackground = true;
-      } catch {
-        setBgFailed(true);
-        finalUrl = dataUrl;
-      }
-    }
-
     const frame: CapturedFrame = {
       id: `${Date.now()}`,
-      dataUrl: finalUrl,
+      dataUrl,
       originalDataUrl: dataUrl,
-      bgRemoved: didRemoveBackground,
+      bgRemoved: cameraRef.current?.hasLiveBackground() ?? false,
       stickers: [],
     };
     setFrames((prev) => [...prev, frame]);
@@ -112,10 +96,11 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
           role={role}
           shareUrl={shareUrl}
           poseId={poseId}
-          poseGuideSrc={POSE_GUIDES.find((p) => p.id === poseId)?.imageSrc}
           setPoseId={setPoseId}
-          removeBg={removeBg}
-          setRemoveBg={setRemoveBg}
+          liveBackground={liveBackground}
+          setLiveBackground={setLiveBackground}
+          selectedBackground={selectedBackground}
+          onRandomBackground={() => setBackgroundIndex((index) => (index + 1 + Math.floor(Math.random() * (STOCK_BACKGROUNDS.length - 1))) % STOCK_BACKGROUNDS.length)}
           cameraReady={cameraReady}
           onStart={() => setStage("shooting")}
           cameraRef={cameraRef}
@@ -129,15 +114,15 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
           <p className="font-mono text-xs text-[var(--color-flash-dim)]/70">
             shot {frames.length + 1} of {TOTAL_SHOTS} · {POSE_GUIDES.find((p) => p.id === poseId)?.name}
           </p>
+          <PoseGuideCard pose={selectedPose} />
           <div className="relative w-full">
             <CameraView
               ref={cameraRef}
               mode={mode}
               roomId={roomId}
               role={role}
-              poseId={poseId}
-              poseGuideSrc={POSE_GUIDES.find((p) => p.id === poseId)?.imageSrc}
-              showPoseGuide
+              liveBackground={liveBackground && mode === "solo"}
+              backgroundSrc={selectedBackground.src}
               onReadyChange={setCameraReady}
               flashKey={flashKey}
             />
@@ -153,23 +138,8 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
         </div>
       )}
 
-      {stage === "processing" && (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[var(--color-flash-dim)] border-t-[var(--color-shutter)]" />
-          <p className="font-mono text-sm text-[var(--color-flash-dim)]">{processingLabel}</p>
-          <p className="max-w-xs text-center text-xs text-[var(--color-flash-dim)]/60">
-            First time is slower — the model downloads once and is cached after that.
-          </p>
-        </div>
-      )}
-
       {stage === "sticker" && currentFrame && (
         <div className="flex flex-col items-center gap-4">
-          {bgFailed && (
-            <p className="max-w-sm text-center text-xs text-[var(--color-gold)]">
-              Background removal didn&apos;t work on this device — kept the original shot instead.
-            </p>
-          )}
           <StickerEditor
             photoUrl={currentFrame.dataUrl}
             initialStickers={currentFrame.stickers}
@@ -213,10 +183,11 @@ function SetupScreen({
   role,
   shareUrl,
   poseId,
-  poseGuideSrc,
   setPoseId,
-  removeBg,
-  setRemoveBg,
+  liveBackground,
+  setLiveBackground,
+  selectedBackground,
+  onRandomBackground,
   cameraReady,
   onStart,
   cameraRef,
@@ -227,10 +198,11 @@ function SetupScreen({
   role: PeerRole;
   shareUrl: string;
   poseId: string;
-  poseGuideSrc?: string;
   setPoseId: (id: string) => void;
-  removeBg: boolean;
-  setRemoveBg: (v: boolean) => void;
+  liveBackground: boolean;
+  setLiveBackground: (v: boolean) => void;
+  selectedBackground: (typeof STOCK_BACKGROUNDS)[number];
+  onRandomBackground: () => void;
   cameraReady: boolean;
   onStart: () => void;
   cameraRef: React.RefObject<CameraViewHandle | null>;
@@ -263,19 +235,6 @@ function SetupScreen({
         </div>
       )}
 
-      <div className="relative w-full">
-        <CameraView
-          ref={cameraRef}
-          mode={mode}
-          roomId={roomId}
-          role={role}
-          poseId={poseId}
-          poseGuideSrc={poseGuideSrc}
-          showPoseGuide
-          onReadyChange={setCameraReady}
-        />
-      </div>
-
       <div>
         <p className="mb-2 font-mono text-[11px] uppercase tracking-widest text-[var(--color-flash-dim)]/70">pose guide</p>
         <div className="-mx-5 flex gap-2 overflow-x-auto px-5 pb-1">
@@ -296,15 +255,40 @@ function SetupScreen({
         </div>
       </div>
 
+      <PoseGuideCard pose={POSE_GUIDES.find((pose) => pose.id === poseId) ?? POSE_GUIDES[0]} />
+
+      <div className="relative w-full">
+        <CameraView
+          ref={cameraRef}
+          mode={mode}
+          roomId={roomId}
+          role={role}
+          liveBackground={liveBackground && mode === "solo"}
+          backgroundSrc={selectedBackground.src}
+          onReadyChange={setCameraReady}
+        />
+      </div>
+
+      <div className="rounded-2xl border border-[var(--color-line)] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <span>
+            <span className="block text-sm font-medium">Stock background</span>
+            <span className="block font-mono text-[11px] text-[var(--color-flash-dim)]/60">{selectedBackground.name}</span>
+          </span>
+          <button type="button" onClick={onRandomBackground} className="rounded-full bg-[var(--color-gold)] px-3 py-2 text-xs font-semibold text-[var(--color-ink)]">Surprise me</button>
+        </div>
+      </div>
+
       <label className="flex items-center justify-between rounded-2xl border border-[var(--color-line)] px-4 py-3.5">
         <span>
-          <span className="block text-sm font-medium">Remove background</span>
-          <span className="block font-mono text-[11px] text-[var(--color-flash-dim)]/60">runs on-device, first shot is slower</span>
+          <span className="block text-sm font-medium">Live background replacement</span>
+          <span className="block font-mono text-[11px] text-[var(--color-flash-dim)]/60">runs on-device before you take the photo</span>
         </span>
         <input
           type="checkbox"
-          checked={removeBg}
-          onChange={(e) => setRemoveBg(e.target.checked)}
+          checked={liveBackground}
+          disabled={mode === "shared"}
+          onChange={(e) => setLiveBackground(e.target.checked)}
           className="h-6 w-6 accent-[var(--color-shutter)]"
         />
       </label>
