@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type Peer from "peerjs";
-import { removeImageBackgroundBlob } from "@/lib/bgRemoval";
+import { FilesetResolver, ImageSegmenter } from "@mediapipe/tasks-vision";
 import { answerCalls, callPeer, createPeer, peerIdFor, PeerRole } from "@/lib/peer";
 
 export type CameraViewHandle = {
@@ -31,6 +31,8 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const foregroundCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const peerRef = useRef<Peer | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const backgroundImageRef = useRef<HTMLImageElement | null>(null);
@@ -116,8 +118,8 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
     };
   }, [mode, roomId, role, facing]);
 
-  // @imgly is an image model, so preview frames are processed sequentially at a small size. That avoids
-  // a stale-frame queue while showing the foreground cutout before the shutter is pressed.
+  // MediaPipe runs its person-segmentation model directly on video frames. The mask is composited on
+  // the GPU-backed pipeline before each repaint, rather than waiting for a still photo to be captured.
   useEffect(() => {
     if (!liveBackground || mode !== "solo" || !localReady) {
       livePreviewReadyRef.current = false;
@@ -126,24 +128,18 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
       return;
     }
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    setPreviewStatus("Preparing live cutout…");
-    const renderNext = async () => {
+    let animationFrame: number | undefined;
+    let segmenter: ImageSegmenter | undefined;
+    setPreviewStatus("Loading live camera effects…");
+    const renderNext = () => {
       const video = localVideoRef.current;
       const preview = previewCanvasRef.current;
-      if (!video?.videoWidth || !preview || cancelled) return;
-      const scale = Math.min(1, PREVIEW_EDGE / Math.max(video.videoWidth, video.videoHeight));
-      const width = Math.max(1, Math.round(video.videoWidth * scale));
-      const height = Math.max(1, Math.round(video.videoHeight * scale));
-      const source = document.createElement("canvas");
-      source.width = width;
-      source.height = height;
-      const sourceCtx = source.getContext("2d");
-      if (!sourceCtx) return;
-      drawMirrored(sourceCtx, video, width, height, facing === "user");
-      try {
-        const cutout = await blobToImage(await removeImageBackgroundBlob(await canvasToBlob(source)));
-        if (cancelled) return;
+      if (!segmenter || !video?.videoWidth || !preview || cancelled) return;
+      segmenter.segmentForVideo(video, performance.now(), (result) => {
+        const personMask = result.confidenceMasks?.[1];
+        if (!personMask || cancelled) return;
+        const width = Math.min(PREVIEW_EDGE, video.videoWidth);
+        const height = Math.round(width * (video.videoHeight / video.videoWidth));
         preview.width = width;
         preview.height = height;
         const ctx = preview.getContext("2d");
@@ -157,19 +153,54 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
           ctx.fillStyle = gradient;
           ctx.fillRect(0, 0, width, height);
         }
-        ctx.drawImage(cutout, 0, 0, width, height);
+        const foreground = foregroundCanvasRef.current ?? document.createElement("canvas");
+        foregroundCanvasRef.current = foreground;
+        foreground.width = width;
+        foreground.height = height;
+        const foregroundCtx = foreground.getContext("2d");
+        if (!foregroundCtx) return;
+        drawMirrored(foregroundCtx, video, width, height, facing === "user");
+        const mask = maskCanvasRef.current ?? document.createElement("canvas");
+        maskCanvasRef.current = mask;
+        mask.width = personMask.width;
+        mask.height = personMask.height;
+        const maskCtx = mask.getContext("2d");
+        if (!maskCtx) return;
+        const alpha = personMask.getAsFloat32Array();
+        const pixels = maskCtx.createImageData(mask.width, mask.height);
+        for (let index = 0; index < alpha.length; index += 1) pixels.data[index * 4 + 3] = Math.round(alpha[index] * 255);
+        maskCtx.putImageData(pixels, 0, 0);
+        foregroundCtx.globalCompositeOperation = "destination-in";
+        foregroundCtx.drawImage(mask, 0, 0, width, height);
+        foregroundCtx.globalCompositeOperation = "source-over";
+        ctx.drawImage(foreground, 0, 0);
         livePreviewReadyRef.current = true;
         setPreviewReady(true);
         setPreviewStatus("");
-      } catch {
-        if (!cancelled) setPreviewStatus("Live cutout is unavailable — your original camera is still ready.");
-      }
-      if (!cancelled) timer = setTimeout(renderNext, 80);
+      });
+      if (!cancelled) animationFrame = requestAnimationFrame(renderNext);
     };
-    renderNext();
+    async function start() {
+      try {
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm");
+        segmenter = await ImageSegmenter.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite",
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          outputConfidenceMasks: true,
+        });
+        if (!cancelled) renderNext();
+      } catch {
+        if (!cancelled) setPreviewStatus("Live camera effects could not load — your original camera is still ready.");
+      }
+    }
+    start();
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      segmenter?.close();
     };
   }, [liveBackground, mode, localReady, facing, backgroundSrc]);
 
@@ -244,18 +275,4 @@ function drawCover(ctx: CanvasRenderingContext2D, image: HTMLImageElement | HTML
   let sx = 0; let sy = 0; let sw = width; let sh = height;
   if (sourceRatio > targetRatio) { sw = height * targetRatio; sx = (width - sw) / 2; } else { sh = width / targetRatio; sy = (height - sh) / 2; }
   ctx.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh);
-}
-
-function canvasToBlob(canvas: HTMLCanvasElement) {
-  return new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Unable to prepare camera frame")), "image/png"));
-}
-
-function blobToImage(blob: Blob) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const image = new Image();
-    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
-    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Unable to render live cutout")); };
-    image.src = url;
-  });
 }
