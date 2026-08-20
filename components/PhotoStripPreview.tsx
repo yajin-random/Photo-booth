@@ -9,7 +9,7 @@ const BORDER = 18;
 const GAP = 14;
 const FOOTER_H = 90;
 
-export function PhotoStripPreview({ frames, roomLabel }: { frames: CapturedFrame[]; roomLabel?: string }) {
+export function PhotoStripPreview({ frames, roomLabel, columns = 1 }: { frames: CapturedFrame[]; roomLabel?: string; columns?: 1 | 3 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
 
@@ -19,7 +19,10 @@ export function PhotoStripPreview({ frames, roomLabel }: { frames: CapturedFrame
     async function build() {
       const canvas = canvasRef.current;
       if (!canvas) return;
-      const totalH = BORDER + frames.length * (FRAME_H + GAP) + FOOTER_H;
+      const rows = Math.ceil(frames.length / columns);
+      const frameW = (STRIP_W - BORDER * 2 - GAP * (columns - 1)) / columns;
+      const frameH = columns === 1 ? FRAME_H : Math.round(frameW * 1.16);
+      const totalH = BORDER + rows * frameH + Math.max(0, rows - 1) * GAP + FOOTER_H;
       canvas.width = STRIP_W;
       canvas.height = totalH;
       const ctx = canvas.getContext("2d");
@@ -42,9 +45,11 @@ export function PhotoStripPreview({ frames, roomLabel }: { frames: CapturedFrame
       if (cancelled) return;
 
       images.forEach((img, i) => {
-        const y = BORDER + i * (FRAME_H + GAP);
-        const w = STRIP_W - BORDER * 2;
-        drawCover(ctx, img, BORDER, y, w, FRAME_H);
+        const row = Math.floor(i / columns);
+        const column = i % columns;
+        const x = BORDER + column * (frameW + GAP);
+        const y = BORDER + row * (frameH + GAP);
+        drawCover(ctx, img, x, y, frameW, frameH);
       });
 
       ctx.fillStyle = "#1b1620";
@@ -59,7 +64,7 @@ export function PhotoStripPreview({ frames, roomLabel }: { frames: CapturedFrame
     return () => {
       cancelled = true;
     };
-  }, [frames, roomLabel]);
+  }, [frames, roomLabel, columns]);
 
   return (
     <div className="flex flex-col items-center gap-5">

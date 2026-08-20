@@ -1,17 +1,17 @@
 "use client";
 
 import { use, useRef, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CameraView, CameraViewHandle } from "@/components/CameraView";
 import { CountdownTimer } from "@/components/CountdownTimer";
 import { StickerEditor } from "@/components/StickerEditor";
 import { PhotoStripPreview } from "@/components/PhotoStripPreview";
 import { PoseGuideCard } from "@/components/PoseGuideOverlay";
-import { POSE_GUIDES, STOCK_BACKGROUNDS } from "@/lib/booth-content";
+import { CAMERA_FILTERS, POSE_GUIDES, STOCK_BACKGROUNDS, STRIP_LAYOUTS, type CameraFilterId, type StripLayoutId } from "@/lib/booth-content";
 import { CapturedFrame } from "@/lib/types";
 import { PeerRole } from "@/lib/peer";
 
-const TOTAL_SHOTS = 3;
 const FINAL_NOTE_PATH = "/sixmonths2026/index.html#final-note";
 
 type Stage = "setup" | "shooting" | "sticker" | "strip";
@@ -28,6 +28,8 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
   const [poseId, setPoseId] = useState(POSE_GUIDES[0].id);
   const [liveBackground, setLiveBackground] = useState(true);
   const [backgroundIndex, setBackgroundIndex] = useState(0);
+  const [filterId, setFilterId] = useState<CameraFilterId>("none");
+  const [stripLayoutId, setStripLayoutId] = useState<StripLayoutId>("3x1");
   const [cameraReady, setCameraReady] = useState(false);
   const [countingDown, setCountingDown] = useState(false);
   const [flashKey, setFlashKey] = useState(0);
@@ -37,6 +39,8 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
   const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/booth/${roomId}?mode=shared&role=guest` : "";
   const selectedPose = POSE_GUIDES.find((pose) => pose.id === poseId) ?? POSE_GUIDES[0];
   const selectedBackground = STOCK_BACKGROUNDS[backgroundIndex];
+  const selectedFilter = CAMERA_FILTERS.find((filter) => filter.id === filterId) ?? CAMERA_FILTERS[0];
+  const selectedLayout = STRIP_LAYOUTS.find((layout) => layout.id === stripLayoutId) ?? STRIP_LAYOUTS[0];
 
   async function handleCapture() {
     const dataUrl = cameraRef.current?.capture();
@@ -64,7 +68,7 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
   }
 
   function advanceAfterSticker() {
-    if (frames.length >= TOTAL_SHOTS) {
+    if (frames.length >= selectedLayout.shots) {
       setStage("strip");
     } else {
       setStage("shooting");
@@ -100,7 +104,11 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
           liveBackground={liveBackground}
           setLiveBackground={setLiveBackground}
           selectedBackground={selectedBackground}
-          onRandomBackground={() => setBackgroundIndex((index) => (index + 1 + Math.floor(Math.random() * (STOCK_BACKGROUNDS.length - 1))) % STOCK_BACKGROUNDS.length)}
+          setBackgroundIndex={setBackgroundIndex}
+          filterId={filterId}
+          setFilterId={setFilterId}
+          stripLayoutId={stripLayoutId}
+          setStripLayoutId={setStripLayoutId}
           cameraReady={cameraReady}
           onStart={() => setStage("shooting")}
           cameraRef={cameraRef}
@@ -112,7 +120,7 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
       {stage === "shooting" && (
         <div className="flex flex-col items-center gap-5">
           <p className="font-mono text-xs text-[var(--color-flash-dim)]/70">
-            shot {frames.length + 1} of {TOTAL_SHOTS} · {POSE_GUIDES.find((p) => p.id === poseId)?.name}
+            shot {frames.length + 1} of {selectedLayout.shots} · {POSE_GUIDES.find((p) => p.id === poseId)?.name}
           </p>
           <PoseGuideCard pose={selectedPose} />
           <div className="relative w-full">
@@ -123,6 +131,7 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
               role={role}
               liveBackground={liveBackground && mode === "solo"}
               backgroundSrc={selectedBackground.src}
+              filterCss={selectedFilter.css}
               onReadyChange={setCameraReady}
               flashKey={flashKey}
             />
@@ -155,7 +164,7 @@ export default function BoothPage({ params }: { params: Promise<{ roomId: string
       {stage === "strip" && (
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
           <h2 className="font-display text-2xl font-bold italic text-[var(--color-flash)]">That&apos;s the strip.</h2>
-          <PhotoStripPreview frames={frames} roomLabel={mode === "shared" ? `room ${roomId}` : "two-up booth"} />
+          <PhotoStripPreview frames={frames} roomLabel={mode === "shared" ? `room ${roomId}` : "two-up booth"} columns={selectedLayout.columns as 1 | 3} />
           <a
             href={finalNoteUrl}
             className="font-mono text-xs text-[var(--color-gold)] underline underline-offset-4"
@@ -187,7 +196,11 @@ function SetupScreen({
   liveBackground,
   setLiveBackground,
   selectedBackground,
-  onRandomBackground,
+  setBackgroundIndex,
+  filterId,
+  setFilterId,
+  stripLayoutId,
+  setStripLayoutId,
   cameraReady,
   onStart,
   cameraRef,
@@ -202,7 +215,11 @@ function SetupScreen({
   liveBackground: boolean;
   setLiveBackground: (v: boolean) => void;
   selectedBackground: (typeof STOCK_BACKGROUNDS)[number];
-  onRandomBackground: () => void;
+  setBackgroundIndex: (index: number) => void;
+  filterId: CameraFilterId;
+  setFilterId: (id: CameraFilterId) => void;
+  stripLayoutId: StripLayoutId;
+  setStripLayoutId: (id: StripLayoutId) => void;
   cameraReady: boolean;
   onStart: () => void;
   cameraRef: React.RefObject<CameraViewHandle | null>;
@@ -265,17 +282,46 @@ function SetupScreen({
           role={role}
           liveBackground={liveBackground && mode === "solo"}
           backgroundSrc={selectedBackground.src}
+          filterCss={(CAMERA_FILTERS.find((filter) => filter.id === filterId) ?? CAMERA_FILTERS[0]).css}
           onReadyChange={setCameraReady}
         />
       </div>
 
       <div className="rounded-2xl border border-[var(--color-line)] p-4">
-        <div className="flex items-center justify-between gap-3">
-          <span>
-            <span className="block text-sm font-medium">Stock background</span>
-            <span className="block font-mono text-[11px] text-[var(--color-flash-dim)]/60">{selectedBackground.name}</span>
-          </span>
-          <button type="button" onClick={onRandomBackground} className="rounded-full bg-[var(--color-gold)] px-3 py-2 text-xs font-semibold text-[var(--color-ink)]">Surprise me</button>
+        <p className="mb-3 font-mono text-[11px] uppercase tracking-widest text-[var(--color-flash-dim)]/70">Choose background</p>
+        <div className="grid grid-cols-2 gap-2">
+          {STOCK_BACKGROUNDS.map((background, index) => (
+            <button
+              key={background.id}
+              type="button"
+              onClick={() => setBackgroundIndex(index)}
+              className={`relative h-20 overflow-hidden rounded-xl border text-left ${selectedBackground.id === background.id ? "border-[var(--color-shutter)] ring-2 ring-[var(--color-shutter)]" : "border-[var(--color-line)]"}`}
+            >
+              <Image src={background.src} alt="" fill sizes="(max-width: 768px) 50vw, 180px" className="object-cover" />
+              <span className="absolute inset-x-0 bottom-0 bg-black/55 px-2 py-1 text-xs font-semibold text-white">{background.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[var(--color-line)] p-4">
+        <p className="mb-3 font-mono text-[11px] uppercase tracking-widest text-[var(--color-flash-dim)]/70">Camera filter</p>
+        <div className="flex flex-wrap gap-2">
+          {CAMERA_FILTERS.map((filter) => (
+            <button key={filter.id} type="button" onClick={() => setFilterId(filter.id)} className={`rounded-full border px-3 py-2 text-xs font-semibold ${filterId === filter.id ? "border-[var(--color-gold)] bg-[var(--color-gold)] text-[var(--color-ink)]" : "border-[var(--color-line)] text-[var(--color-flash-dim)]"}`}>{filter.name}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[var(--color-line)] p-4">
+        <p className="mb-3 font-mono text-[11px] uppercase tracking-widest text-[var(--color-flash-dim)]/70">Strip format</p>
+        <div className="grid grid-cols-3 gap-2">
+          {STRIP_LAYOUTS.map((layout) => (
+            <button key={layout.id} type="button" onClick={() => setStripLayoutId(layout.id)} className={`rounded-xl border px-2 py-3 text-center ${stripLayoutId === layout.id ? "border-[var(--color-shutter)] bg-[var(--color-shutter)] text-[var(--color-flash)]" : "border-[var(--color-line)] text-[var(--color-flash-dim)]"}`}>
+              <span className="block font-display text-base font-bold italic">{layout.id}</span>
+              <span className="mt-1 block font-mono text-[10px]">{layout.detail}</span>
+            </button>
+          ))}
         </div>
       </div>
 

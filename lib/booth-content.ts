@@ -17,6 +17,24 @@ export const STOCK_BACKGROUNDS = [
   { id: "cabin", name: "Mountain cabin", src: "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?auto=format&fit=crop&w=1080&q=82" },
 ] as const;
 
+export const CAMERA_FILTERS = [
+  { id: "none", name: "Clean", css: "none" },
+  { id: "warm", name: "Golden", css: "sepia(0.22) saturate(1.16) contrast(1.04)" },
+  { id: "mono", name: "B&W", css: "grayscale(1) contrast(1.16)" },
+  { id: "dreamy", name: "Dreamy", css: "saturate(0.82) brightness(1.08) contrast(0.9)" },
+  { id: "pop", name: "Pop", css: "saturate(1.42) contrast(1.12)" },
+  { id: "rose", name: "Rose", css: "sepia(0.12) hue-rotate(315deg) saturate(1.18)" },
+] as const;
+
+export const STRIP_LAYOUTS = [
+  { id: "3x1", name: "Classic", detail: "3 photos", shots: 3, columns: 1 },
+  { id: "4x1", name: "Long", detail: "4 photos", shots: 4, columns: 1 },
+  { id: "3x3", name: "Grid", detail: "9 photos", shots: 9, columns: 3 },
+] as const;
+
+export type CameraFilterId = (typeof CAMERA_FILTERS)[number]["id"];
+export type StripLayoutId = (typeof STRIP_LAYOUTS)[number]["id"];
+
 export const STICKERS: StickerDef[] = [
   { id: "heart", glyph: "\u2764\uFE0F", label: "Heart" },
   { id: "sparkle", glyph: "\u2728", label: "Sparkle" },

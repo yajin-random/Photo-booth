@@ -16,6 +16,7 @@ type Props = {
   role?: PeerRole;
   liveBackground: boolean;
   backgroundSrc?: string;
+  filterCss?: string;
   onReadyChange?: (ready: boolean) => void;
   flashKey?: number;
 };
@@ -23,7 +24,7 @@ type Props = {
 const MAX_EDGE = 1080;
 
 export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraView(
-  { mode, roomId, role, liveBackground, backgroundSrc, onReadyChange, flashKey },
+  { mode, roomId, role, liveBackground, backgroundSrc, filterCss = "none", onReadyChange, flashKey },
   ref
 ) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -142,7 +143,7 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
         const context = preview.getContext("2d");
         if (context) {
           drawCover(context, background, 0, 0, preview.width, preview.height);
-          drawMirrored(context, cutout, preview.width, preview.height, facing === "user");
+          drawMirrored(context, cutout, preview.width, preview.height, facing === "user", 0, filterCss);
           livePreviewReadyRef.current = true;
           setPreviewReady(true);
           setPreviewStatus("");
@@ -160,7 +161,7 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
       segmenter.close();
       if (segmenterRef.current === segmenter) segmenterRef.current = null;
     };
-  }, [liveBackground, mode, localReady, facing, backgroundSrc]);
+  }, [liveBackground, mode, localReady, facing, backgroundSrc, filterCss]);
 
   useEffect(() => {
     onReadyChange?.(mode === "solo" ? localReady && !cameraError : localReady && remoteReady && !cameraError);
@@ -181,9 +182,9 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
         const background = backgroundImageRef.current;
         if (cutout && background) {
           drawCover(ctx, background, 0, 0, w, h);
-          drawMirrored(ctx, cutout, w, h, facing === "user");
+          drawMirrored(ctx, cutout, w, h, facing === "user", 0, filterCss);
         } else {
-          drawMirrored(ctx, video, w, h, facing === "user");
+          drawMirrored(ctx, video, w, h, facing === "user", 0, filterCss);
         }
       } else {
         const first = role === "host" ? localVideoRef.current : remoteVideoRef.current;
@@ -202,7 +203,7 @@ export const CameraView = forwardRef<CameraViewHandle, Props>(function CameraVie
   return (
     <div className="relative w-full overflow-hidden rounded-[28px] bg-black" style={{ aspectRatio: mode === "shared" ? "4/3" : "3/4" }}>
       {mode === "solo" ? <>
-        <video ref={localVideoRef} autoPlay muted playsInline onLoadedMetadata={() => setLocalReady(true)} className={`h-full w-full object-cover ${previewReady ? "opacity-0" : "opacity-100"}`} style={{ transform: facing === "user" ? "scaleX(-1)" : "none" }} />
+        <video ref={localVideoRef} autoPlay muted playsInline onLoadedMetadata={() => setLocalReady(true)} className={`h-full w-full object-cover ${previewReady ? "opacity-0" : "opacity-100"}`} style={{ transform: facing === "user" ? "scaleX(-1)" : "none", filter: filterCss }} />
         <canvas ref={previewCanvasRef} className={`absolute inset-0 h-full w-full object-cover ${previewReady ? "opacity-100" : "opacity-0"}`} />
         {liveBackground && !cameraError && <div className="absolute inset-x-0 bottom-0 bg-black/55 px-4 py-3 text-center font-mono text-[11px] text-[var(--color-flash-dim)]">{previewReady ? "LIVE BACKGROUND ACTIVE" : previewStatus || "Preparing live cutout…"}</div>}
       </> : <div className="flex h-full w-full">
@@ -223,10 +224,11 @@ function fitDims(width: number, height: number) {
   return scale >= 1 ? { w: width, h: height } : { w: Math.round(width * scale), h: Math.round(height * scale) };
 }
 
-function drawMirrored(ctx: CanvasRenderingContext2D, video: HTMLVideoElement | HTMLCanvasElement, width: number, height: number, mirror: boolean, offsetX = 0) {
+function drawMirrored(ctx: CanvasRenderingContext2D, video: HTMLVideoElement | HTMLCanvasElement, width: number, height: number, mirror: boolean, offsetX = 0, filter = "none") {
   ctx.save();
   ctx.translate(offsetX, 0);
   if (mirror) { ctx.translate(width, 0); ctx.scale(-1, 1); }
+  ctx.filter = filter;
   drawCover(ctx, video, 0, 0, width, height);
   ctx.restore();
 }
